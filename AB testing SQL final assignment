@@ -1,0 +1,176 @@
+1. Data Quality Check of dsv1069.final_assignments_qa
+
+SELECT 
+  *
+FROM 
+  dsv1069.final_assignments_qa
+
+2. Reformatting the dsv1069.final_assignments_qa table to resemble the dsv1069.final_assignments table
+
+--Reformat the final_assignments_qa to look like the final_assignments table, filling in any missing values with a placeholder of the appropriate data type.
+
+--Checking dsv1060.final_assignments to compare formatting with the final_assignments_qa table
+-- Table schema includes item_id, test_assignment, test_number, and test_s
+SELECT 
+  *
+FROM 
+  dsv1069.final_assignments
+  
+--Formatting table to match resutls of final_assignment which only includes 3 tests not 5
+-- Assinging test_assignment a binary value where 0 is control and 1 is the treatment
+SELECT 
+  item_id,
+  test_a AS test_assignment,
+  (CASE WHEN test_a IS NOT NULL THEN 'item_test_1'
+  ELSE NULL 
+  END) AS test_number,
+  (CASE WHEN test_a IS NOT NULL THEN '2013-01-05 00:00:00'
+  ELSE NULL 
+  END) AS test_start_date
+FROM 
+  dsv1069.final_assignments_qa
+  
+UNION 
+
+SELECT 
+  item_id,
+  test_a AS test_assignment,
+  (CASE WHEN test_b IS NOT NULL THEN 'item_test_2'
+  ELSE NULL 
+  END) AS test_number,
+  (CASE WHEN test_b IS NOT NULL THEN '2013-01-05 00:00:00'
+  ELSE NULL 
+  END) AS test_start_date
+FROM 
+  dsv1069.final_assignments_qa
+
+UNION 
+
+SELECT 
+  item_id,
+  test_a AS test_assignment,
+  (CASE WHEN test_c IS NOT NULL THEN 'item_test_3'
+  ELSE NULL 
+  END) AS test_number,
+  (CASE WHEN test_c IS NOT NULL THEN '2013-01-05 00:00:00'
+  ELSE NULL 
+  END) AS test_start_date
+FROM 
+  dsv1069.final_assignments_qa
+
+3. Compute order binary results
+
+-- Use this table to 
+-- compute order_binary for the 30 day window after the test_start_date
+-- for the test named item_test_2
+
+SELECT 
+  test_assignment,
+  SUM(order_binary_count) AS items_ordered_in_30d,
+  COUNT(DISTINCT item_id) AS number_of_items
+FROM
+  (
+    SELECT 
+      item_test_select.item_id,
+      item_test_select.test_assignment,
+      item_test_select.test_number,
+      item_test_select.test_start_date,
+      item_test_select.created_at,
+      MAX (CASE 
+            WHEN created_at > test_start_date 
+              AND DATE_PART('day', created_at - test_start_date) <= 30 
+            THEN 1
+            ELSE 0
+           END) AS order_binary_count
+    FROM 
+      (
+        SELECT
+          final_assignments.*,
+          DATE(orders.created_at) AS created_at
+        FROM 
+          dsv1069.final_assignments AS final_assignments
+        LEFT JOIN 
+          dsv1069.orders AS orders
+        ON 
+          final_assignments.item_id = orders.item_id
+        WHERE
+          final_assignments.test_number = 'item_test_2'
+      ) AS item_test_select
+    GROUP BY 
+      item_test_select.item_id,
+      item_test_select.test_assignment,
+      item_test_select.test_number,
+      item_test_select.test_start_date,
+      item_test_select.created_at 
+  ) AS order_binary_count 
+GROUP BY 
+  test_assignment;
+
+4. Compute item binary
+
+-- Use this table to 
+-- compute view_binary for the 30 day window after the test_start_date
+-- for the test named item_test_2
+
+--Using the event table to look where event_name = 'view' to compute view binary for the 30 day window after testing began based on the framework of the previous question
+SELECT 
+  test_assignment,
+  SUM(view_binary_count) AS items_viewed_in_30d,
+  COUNT(DISTINCT item_id) AS number_of_items
+FROM
+  (
+    SELECT 
+      view_test_select.item_id,
+      view_test_select.test_assignment,
+      view_test_select.test_number,
+      MAX(CASE
+            WHEN (view_date > test_start_date 
+                  AND DATE_PART('day', view_date - test_start_date) <= 30)
+            THEN 1
+            ELSE 0
+           END) AS view_binary_count
+    FROM 
+      (
+        SELECT
+          final_assignments.*,
+          DATE(event.event_time) AS view_date
+        FROM 
+          dsv1069.final_assignments AS final_assignments
+        LEFT JOIN 
+          (
+            SELECT event_time,
+                   CASE 
+                     WHEN parameter_name = 'item_id' THEN CAST(parameter_value AS NUMERIC)
+                     ELSE NULL
+                   END AS item_id
+            FROM dsv1069.events
+            WHERE event_name = 'view_item'
+          ) AS event
+        ON final_assignments.item_id = event.item_id
+        WHERE final_assignments.test_number = 'item_test_2'
+      ) AS view_test_select
+    GROUP BY 
+      view_test_select.item_id,
+      view_test_select.test_assignment,
+      view_test_select.test_number
+  ) AS view_binary_count
+GROUP BY 
+  test_assignment;
+
+5. Compute lift and p values 
+
+--Use the https://thumbtack.github.io/abba/demo/abba.html to compute the lifts in metrics and the p-values for the binary metrics ( 30 day order binary and 30 day view binary) using a interval 95% confidence. \
+
+-- Order binary test results
+  -- Control success rate: 34%
+  -- Treatment success rate: 34%
+    -- p value: 0.93
+    -- Lift: -0.5%
+  
+-- Item binary test results
+  -- Control success rate: 80%
+  -- Treatment success rate: 82%
+    -- p value: 0.27
+    -- Lift: 2.3%
+    
+-- Neither test results have a p value small enough to indicate significance of findings.
